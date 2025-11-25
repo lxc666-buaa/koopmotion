@@ -15,7 +15,7 @@ data_args:
 # Reconstruction parameters 
 reconstruction_args:
   estimate_type: using_identity_observable # using_proxy_delifting or using_identity_observable
-  future_state_prediction: 2 # In our use-case, single step future state prediction is sufficient to create a vector field. Otherwise note that the Koopman propagation depends on the sampling interval of your data 
+  future_state_prediction: 2 # In our use-case, single step future state prediction is sufficient to create a vector field. Otherwise note that the Koopman propagation depends on the sampling interval of your data
   num_cols: 121
   num_rows: 121
   save_vector_field: true
@@ -40,7 +40,7 @@ training_args:
 
   # Loss weights 
   loss_weights:
-  divergence_weight: 1
+  divergence_weight: 0.1
   koopman_weight: 1.0
   convergence_weight: 0.1
 

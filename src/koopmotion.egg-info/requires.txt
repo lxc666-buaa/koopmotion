@@ -1,8 +1,0 @@
-numpy<2.0,>=1.26
-scipy<1.15,>=1.10
-matplotlib<3.10,>=3.7
-torch<2.6,>=2.0
-pyLasaDataset==0.1.1
-PyYAML<6.1,>=6.0
-ruamel.yaml<0.18,>=0.17
-tensorboard<2.18,>=2.10
