@@ -66,7 +66,7 @@ class Reconstructor:
         with torch.no_grad():  # 禁用梯度计算以提高效率
 
             # Koopman算子
-            K = (model.U @ model.V.T)
+            K = model.U @ model.V.T
 
             # 注意：如果我们在稀疏数据上训练，point_propagation_prediction将根据稀疏数据时间差演变
             for i in range(1, point_propagation_prediction.shape[2]):

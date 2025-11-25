@@ -118,8 +118,9 @@ class ModelTrainer():
                 # 对当前批次数据进行前向传播
                 PsiX, _ = model(data_input[:, batch_ints])  # 当前时刻提升表示
                 PsiY, _ = model(data_output[:, batch_ints])  # 下一时刻提升表示
-
+                #K = model.get_K()
                 # 假设轨迹的最后一个点是必须收敛的目标点
+                K=model.U @ model.V.T
                 goal = data_output[:, -1].reshape(-1, 1)
                 lifted_goal_next, _ = model(goal)
 

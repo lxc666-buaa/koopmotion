@@ -47,7 +47,8 @@ def plot_eigenvalues(model, system_name):
     # 获取 U 和 V 并计算 K (确保在CPU上并分离梯度)
     U = model.U.detach().cpu().numpy()
     V = model.V.detach().cpu().numpy()
-    K = U @ V.T
+    K=U@V.T
+    #K = model.get_K().detach().cpu().numpy()
 
     # 计算特征值
     eigvals = np.linalg.eigvals(K)

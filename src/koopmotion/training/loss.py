@@ -26,7 +26,7 @@ class LossFunction():
             # 使用自定义的损失函数
             self.loss_fn = custom_loss
 
-    def __call__(self, training_args, lifted_inputs_current, lifted_inputs_next, U, V, lifted_goal_next, kernel,
+    def __call__(self, training_args, lifted_inputs_current, lifted_inputs_next, U,V, lifted_goal_next, kernel,
                  dense_training_points):
         """
         调用损失函数计算损失值
@@ -44,11 +44,11 @@ class LossFunction():
         返回:
             根据所选损失函数类型计算得到的损失值
         """
-        return self.loss_fn(training_args, lifted_inputs_current, lifted_inputs_next, U, V, lifted_goal_next, kernel,
+        return self.loss_fn(training_args, lifted_inputs_current, lifted_inputs_next, U,V, lifted_goal_next, kernel,
                             dense_training_points)
 
 
-def custom_loss(training_args, lifted_inputs_current, lifted_inputs_next, U, V,
+def custom_loss(training_args, lifted_inputs_current, lifted_inputs_next, U,V,
                 lifted_goal_next,
                 kernel, dense_training_points):
     """

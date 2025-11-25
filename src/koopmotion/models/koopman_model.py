@@ -28,6 +28,7 @@ class KoopmanModel(nn.Module):
         # 为使用恒等可观测进行重构而附加状态本身的维度
         self.num_rff = self.training_args['num_rff'] + D
 
+
         # 注意：我们使用Koopman算子的低秩版本，因为这似乎有助于正则化
         rank = self.training_args['operator_rank']
         # 定义Koopman算子的U和V参数矩阵，用于低秩近似 K = U @ V.T
@@ -61,3 +62,4 @@ class KoopmanModel(nn.Module):
         forward_propagated_lifted_inputs = K @ lifted_inputs
 
         return lifted_inputs, forward_propagated_lifted_inputs
+

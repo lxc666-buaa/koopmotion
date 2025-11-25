@@ -40,9 +40,9 @@ training_args:
 
   # Loss weights 
   loss_weights:
-  divergence_weight: 1
+  divergence_weight: 0.1
   koopman_weight: 1.0
-  convergence_weight: 1
+  convergence_weight: 0.1
 
 # Plotting parameters
 plotting_args:
