@@ -26,8 +26,9 @@ class LossFunction():
             # 使用自定义的损失函数
             self.loss_fn = custom_loss
 
-    def __call__(self, training_args, lifted_inputs_current, lifted_inputs_next, U,V, lifted_goal_next, kernel,
-                 dense_training_points):
+    def __call__(self, training_args, lifted_inputs_current, lifted_inputs_next, raw_inputs_current, U, V,
+                 lifted_goal_next, kernel,
+                 dense_training_points, auxiliary_inputs=None, lifted_auxiliary=None):
         """
         调用损失函数计算损失值
 
@@ -37,20 +38,34 @@ class LossFunction():
             lifted_inputs_next: 下一时刻提升后的输入数据
             U: Koopman算子的U矩阵参数
             V: Koopman算子的V矩阵参数
+            raw_inputs_current: 当前时刻原始输入（未提升）
             lifted_goal_next: 目标状态提升后的表示
             kernel: 核函数相关参数
             dense_training_points: 密集训练点数据
+            auxiliary_inputs: 位于障碍物安全带周围的辅助点（用于避障损失）
+            lifted_auxiliary: 提升后的辅助点
 
         返回:
             根据所选损失函数类型计算得到的损失值
         """
-        return self.loss_fn(training_args, lifted_inputs_current, lifted_inputs_next, U,V, lifted_goal_next, kernel,
-                            dense_training_points)
+        return self.loss_fn(training_args, lifted_inputs_current, lifted_inputs_next, raw_inputs_current, U, V,
+                            lifted_goal_next, kernel,
+                            dense_training_points, auxiliary_inputs=auxiliary_inputs,
+                            lifted_auxiliary=lifted_auxiliary)
 
 
-def custom_loss(training_args, lifted_inputs_current, lifted_inputs_next, U,V,
+def _get_loss_weight(training_args, key, default=1.0):
+    """Safely fetch nested loss weights with backwards compatibility."""
+
+    if isinstance(training_args.get('loss_weights', None), dict):
+        if key in training_args['loss_weights']:
+            return training_args['loss_weights'][key]
+    return training_args.get(key, default)
+
+
+def custom_loss(training_args, lifted_inputs_current, lifted_inputs_next, raw_inputs_current, U, V,
                 lifted_goal_next,
-                kernel, dense_training_points):
+                kernel, dense_training_points, auxiliary_inputs=None, lifted_auxiliary=None):
     """
     自定义损失函数，用于Koopman模型的训练优化
 
@@ -83,9 +98,27 @@ def custom_loss(training_args, lifted_inputs_current, lifted_inputs_next, U,V,
     # 计算Koopman算子K = U @ V.T，这是Koopman算子的低秩近似形式
     K = U @ V.T
 
-    # Koopman线性性损失：衡量提升空间中的线性演化准确性
+    # Koopman线性性损失（带可微掩码）：衡量提升空间中的线性演化准确性
     # 期望下一时刻的提升表示等于当前时刻提升表示经Koopman算子变换后的结果
-    loss_koopman_linearity = mse_loss(lifted_inputs_next, K @ lifted_inputs_current)
+    predicted_next_lifted = K @ lifted_inputs_current
+
+    # 根据可选障碍物掩码调整对示教数据的信任度
+    obstacle_cfg = training_args.get('obstacle', {}) or {}
+    obstacle_enabled = obstacle_cfg.get('enabled', False)
+    if obstacle_enabled:
+        device = lifted_inputs_current.device
+        dtype = lifted_inputs_current.dtype
+        center = torch.tensor(obstacle_cfg.get('center', [0.0, 0.0]), device=device, dtype=dtype).reshape(2, 1)
+        safe_radius = float(obstacle_cfg.get('radius', 0.0)) + float(obstacle_cfg.get('safety_margin', 0.0))
+        mask_alpha = float(obstacle_cfg.get('mask_alpha', 10.0))
+        distances = torch.linalg.norm(raw_inputs_current - center, dim=0)
+        mask_weights = torch.sigmoid(mask_alpha * (distances - safe_radius))
+    else:
+        mask_weights = torch.ones(lifted_inputs_current.shape[1], device=lifted_inputs_current.device,
+                                  dtype=lifted_inputs_current.dtype)
+
+    koopman_error = torch.sum((lifted_inputs_next - predicted_next_lifted) ** 2, dim=0)
+    loss_koopman_linearity = torch.mean(mask_weights * koopman_error)
 
     # 目标收敛损失：确保目标状态在Koopman算子作用下保持不变（即为不动点）
     # 期望目标状态提升表示在Koopman算子作用后仍保持不变
@@ -101,18 +134,42 @@ def custom_loss(training_args, lifted_inputs_current, lifted_inputs_next, U,V,
     )
 
     # 根据配置文件中的权重参数对各项损失进行加权
-    loss_div_local_weighted = loss_div_local * training_args['divergence_weight']
-    loss_koopman_linearity_weighted = loss_koopman_linearity * training_args['koopman_weight']
-    loss_goal_convergence_weighted = loss_goal_convergence * training_args['convergence_weight']
+    divergence_weight = _get_loss_weight(training_args, 'divergence_weight', 1.0)
+    koopman_weight = _get_loss_weight(training_args, 'koopman_weight', 1.0)
+    convergence_weight = _get_loss_weight(training_args, 'convergence_weight', 1.0)
+    repulsion_weight = _get_loss_weight(training_args, 'repulsion_weight', 0.0)
+
+    loss_div_local_weighted = loss_div_local * divergence_weight
+    loss_koopman_linearity_weighted = loss_koopman_linearity * koopman_weight
+    loss_goal_convergence_weighted = loss_goal_convergence * convergence_weight
+
+    # 避障势场损失：仅在配置启用时生效
+    loss_repulsion = torch.tensor(0.0, device=lifted_inputs_current.device, dtype=lifted_inputs_current.dtype)
+    if obstacle_enabled and repulsion_weight > 0:
+        def repulsion_penalty(predicted_states):
+            distances = torch.linalg.norm(predicted_states - center, dim=0)
+            return torch.relu(safe_radius - distances) ** 2
+
+        predicted_next_states = predicted_next_lifted[:2, :]
+        penalties = [repulsion_penalty(predicted_next_states)]
+
+        if lifted_auxiliary is not None and auxiliary_inputs is not None:
+            predicted_aux_next_states = (K @ lifted_auxiliary)[:2, :]
+            penalties.append(repulsion_penalty(predicted_aux_next_states))
+
+        loss_repulsion = torch.mean(torch.cat(penalties))
+
+    loss_repulsion_weighted = loss_repulsion * repulsion_weight
 
     # 计算总损失，为各项加权损失之和
-    loss += loss_koopman_linearity_weighted + loss_div_local_weighted + loss_goal_convergence_weighted
+    loss += loss_koopman_linearity_weighted + loss_div_local_weighted + loss_goal_convergence_weighted + loss_repulsion_weighted
 
     # 返回各项损失组成的字典，用于消融研究中的权重调整分析
     losses = {
         "koopman": loss_koopman_linearity_weighted,  # Koopman线性性损失
         "divergence": loss_div_local_weighted,  # 散度损失
         "goal": loss_goal_convergence_weighted,  # 目标收敛损失
+        "repulsion": loss_repulsion_weighted,  # 避障势场损失
     }
     return loss, losses
 

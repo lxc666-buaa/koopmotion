@@ -5,8 +5,8 @@ Training/optimization functions
 import numpy as np
 import yaml as yaml 
 import os  
-import torch 
-import matplotlib.pyplot as plt 
+import torch
+import matplotlib.pyplot as plt
 
 from koopmotion.datasets.data_getter import TrainingData  
 
@@ -115,6 +115,15 @@ class ModelTrainer():
                 # 获取用于散度损失的训练点周围的点
                 training_points_for_divergence_loss = self.get_points_around_training(concatenated_data.T)
 
+                # 在障碍物附近采样辅助点，以提供避障梯度
+                obstacle_cfg = self.training_args.get('obstacle', {}) or {}
+                auxiliary_inputs = None
+                lifted_auxiliary = None
+                if obstacle_cfg.get('enabled', False):
+                    auxiliary_inputs = self.sample_obstacle_points(obstacle_cfg, data_input.device, data_input.dtype)
+                    if auxiliary_inputs is not None:
+                        lifted_auxiliary, _ = model(auxiliary_inputs)
+
                 # 对当前批次数据进行前向传播
                 PsiX, _ = model(data_input[:, batch_ints])  # 当前时刻提升表示
                 PsiY, _ = model(data_output[:, batch_ints])  # 下一时刻提升表示
@@ -127,10 +136,13 @@ class ModelTrainer():
                 # 计算损失
                 loss, _ = loss_fn(self.training_args,
                                   PsiX, PsiY,  # 当前和下一时刻提升表示
+                                  data_input[:, batch_ints],  # 原始输入用于避障掩码
                                   model.U, model.V,  # Koopman算子参数
                                   lifted_goal_next,  # 提升后的目标点
                                   model.observables,  # 可观测量
-                                  training_points_for_divergence_loss)  # 散度计算点
+                                  training_points_for_divergence_loss,  # 散度计算点
+                                  auxiliary_inputs=auxiliary_inputs,  # 障碍物附近采样点
+                                  lifted_auxiliary=lifted_auxiliary)  # 提升后的辅助点
 
                 # 反向传播
                 loss.backward()
@@ -191,6 +203,36 @@ class ModelTrainer():
         # 获取对应的点并转置
         points = training_points[i].T.contiguous()
         return points
+
+    def sample_obstacle_points(self, obstacle_cfg, device, dtype):
+        """
+        在障碍物安全带附近均匀采样辅助点，用于避障势场损失。
+
+        参数:
+            obstacle_cfg: 障碍物配置（包含圆心、半径和安全余量）
+            device: 目标设备
+            dtype: 采样点数据类型
+
+        返回:
+            Tensor 或 None: 形状为(2, batch_size)的采样点；若未配置采样则返回None
+        """
+
+        batch_size = int(obstacle_cfg.get('auxiliary_batch_size', 0))
+        if batch_size <= 0:
+            return None
+
+        center = torch.tensor(obstacle_cfg.get('center', [0.0, 0.0]), device=device, dtype=dtype).reshape(2, 1)
+        radius = float(obstacle_cfg.get('radius', 0.0))
+        safety_margin = float(obstacle_cfg.get('safety_margin', 0.0))
+        outer_radius = radius + safety_margin
+
+        # 在圆环区域内均匀采样
+        angles = 2 * torch.pi * torch.rand(batch_size, device=device, dtype=dtype)
+        radii = torch.sqrt(
+            torch.rand(batch_size, device=device, dtype=dtype) * (outer_radius ** 2 - radius ** 2) + radius ** 2
+        )
+        offsets = torch.stack((torch.cos(angles), torch.sin(angles)), dim=0) * radii
+        return center + offsets
 
 
 

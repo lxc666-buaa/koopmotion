@@ -236,10 +236,11 @@ def reconstruct_and_plot(config_args, trained_weights_path):
 
 def main():
     # Choose LASA pattern here: 'Angle' or 'Sine'
-    pattern_name = 'Angle'
+    pattern_name = os.environ.get('KOOPMOTION_PATTERN', 'Angle')
 
     # Map to system folder name used by KoopMotion (e.g., 'lasa_angle_{1,0.01,0.01}', 'lasa_sine')
-    system_name = 'lasa_' + pattern_name.lower()
+    # Allow overriding via env to load obstacle-ready configs such as `lasa_angle_obstacle`.
+    system_name = os.environ.get('KOOPMOTION_SYSTEM', 'lasa_' + pattern_name.lower())
 
     # Load config that corresponds to the chosen pattern/system
     yaml.add_constructor('tag:yaml.org,2002:int', int_constructor, Loader=yaml.SafeLoader)
